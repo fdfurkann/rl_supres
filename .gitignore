@@ -1,0 +1,41 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+*.whl
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model artifacts and run outputs
+runs/
+*.zip
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# macOS metadata
+.DS_Store

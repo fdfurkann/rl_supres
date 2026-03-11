@@ -1,0 +1,19 @@
+# Core RL
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+
+# Deep learning backend
+torch>=2.0.0
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Visualization (optional but recommended)
+matplotlib>=3.7.0
+
+# Serialization / utilities
+cloudpickle>=2.2.0
+
+# Optional: faster Parquet I/O
+# pyarrow>=12.0.0
