@@ -1,11 +1,14 @@
 """
 Data loading utilities for OHLCV data.
-Supports CSV/Parquet files and multiple timeframes.
+Supports CSV/Parquet files, Binance REST API, and multiple timeframes.
 """
 
 from __future__ import annotations
 
+import io
 import os
+import time
+import urllib.request
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple, List, Union
@@ -74,6 +77,183 @@ def load_parquet(path: str, lowercase_cols: bool = True) -> pd.DataFrame:
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index)
     df = df.sort_index()
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Binance REST API fetcher
+# ---------------------------------------------------------------------------
+
+_BINANCE_BASE = "https://api.binance.com/api/v3/klines"
+
+_BINANCE_INTERVALS = {
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "8h", "12h",
+    "1d", "3d", "1w", "1M",
+}
+
+# Fallback: publicly accessible BTC daily data (2021) hosted on GitHub
+_BTCUSD_FALLBACK_URL = (
+    "https://raw.githubusercontent.com/gagolews/teaching-data"
+    "/master/marek/btcusd_ohlcv_2021_dates.csv"
+)
+
+
+def fetch_binance_ohlcv(
+    symbol: str = "BTCUSDT",
+    interval: str = "1h",
+    limit: int = 1000,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    use_fallback_on_error: bool = True,
+) -> pd.DataFrame:
+    """
+    Fetch OHLCV candlestick data from the Binance REST API.
+
+    No API key is required for public market data.
+
+    Args:
+        symbol:               Trading pair symbol (e.g. "BTCUSDT", "ETHUSDT").
+        interval:             Candlestick interval.  One of: 1m, 3m, 5m, 15m,
+                              30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M.
+        limit:                Number of candles to return (max 1000 per request).
+        start_time:           Optional start time as UTC millisecond timestamp.
+        end_time:             Optional end time as UTC millisecond timestamp.
+        use_fallback_on_error: If True and the Binance API is unreachable,
+                              falls back to a cached 2021 daily BTC/USD dataset
+                              from GitHub so the script still runs in restricted
+                              network environments.  Set to False to raise an
+                              error instead.
+
+    Returns:
+        DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
+        and a UTC DatetimeIndex.
+
+    Raises:
+        RuntimeError: If Binance is unreachable and use_fallback_on_error=False.
+    """
+    if interval not in _BINANCE_INTERVALS:
+        raise ValueError(
+            f"Invalid interval '{interval}'. "
+            f"Valid options: {sorted(_BINANCE_INTERVALS)}"
+        )
+
+    params = f"?symbol={symbol.upper()}&interval={interval}&limit={limit}"
+    if start_time is not None:
+        params += f"&startTime={int(start_time)}"
+    if end_time is not None:
+        params += f"&endTime={int(end_time)}"
+
+    url = _BINANCE_BASE + params
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "rl_supres/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            import json
+            raw = json.loads(resp.read())
+    except Exception as exc:
+        if not use_fallback_on_error:
+            raise RuntimeError(
+                f"Binance API request failed: {exc}\n"
+                "Check your internet connection or set use_fallback_on_error=True."
+            ) from exc
+        print(
+            f"[fetch_binance_ohlcv] WARNING: Binance API unreachable ({exc}).\n"
+            "  Falling back to cached 2021 BTC/USD daily dataset from GitHub."
+        )
+        return _load_fallback_btcusd()
+
+    # Binance klines columns:
+    # 0:open_time 1:open 2:high 3:low 4:close 5:volume
+    # 6:close_time 7:quote_volume 8:n_trades 9:taker_buy_base 10:taker_buy_quote 11:ignore
+    df = pd.DataFrame(raw, columns=[
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "n_trades",
+        "taker_buy_base", "taker_buy_quote", "ignore",
+    ])
+    df = df[["open_time", "open", "high", "low", "close", "volume"]].copy()
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    df = df.set_index("open_time")
+    df.index.name = "datetime"
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.sort_index()
+    return df
+
+
+def fetch_binance_bulk(
+    symbol: str = "BTCUSDT",
+    interval: str = "1h",
+    total_bars: int = 5000,
+) -> pd.DataFrame:
+    """
+    Fetch more than 1000 bars from Binance by making multiple paginated requests.
+
+    Args:
+        symbol:      Trading pair (e.g. "BTCUSDT").
+        interval:    Candlestick interval (e.g. "1h", "1d").
+        total_bars:  Approximate total number of bars to fetch.
+
+    Returns:
+        DataFrame with OHLCV data.
+    """
+    all_dfs = []
+    limit = 1000
+    end_time = None
+
+    while True:
+        needed = total_bars - sum(len(d) for d in all_dfs)
+        if needed <= 0:
+            break
+        batch = min(limit, needed)
+        df = fetch_binance_ohlcv(
+            symbol=symbol,
+            interval=interval,
+            limit=batch,
+            end_time=end_time,
+            use_fallback_on_error=False,
+        )
+        if df.empty:
+            break
+        all_dfs.append(df)
+        # Move end_time to just before the first bar of the current batch
+        end_time = int(df.index[0].timestamp() * 1000) - 1
+        if len(df) < batch:
+            break
+        time.sleep(0.1)  # rate-limit courtesy
+
+    if not all_dfs:
+        return pd.DataFrame()
+    combined = pd.concat(all_dfs).sort_index().drop_duplicates()
+    return combined
+
+
+def _load_fallback_btcusd() -> pd.DataFrame:
+    """
+    Load a cached 2021 BTC/USD daily OHLCV dataset from GitHub.
+    Used as a fallback when the Binance API is not accessible.
+    """
+    req = urllib.request.Request(
+        _BTCUSD_FALLBACK_URL,
+        headers={"User-Agent": "rl_supres/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read().decode("utf-8")
+
+    lines = [l for l in raw.splitlines() if not l.startswith("#") and l.strip()]
+    df = pd.read_csv(io.StringIO("\n".join(lines)))
+    df.columns = [c.lower() for c in df.columns]
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+    df = df.set_index("date")
+    df.index.name = "datetime"
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.sort_index()
+    print(
+        f"[fetch_binance_ohlcv] Fallback data loaded: "
+        f"{len(df)} daily BTC/USD bars "
+        f"({str(df.index[0])[:10]} → {str(df.index[-1])[:10]})."
+    )
     return df
 
 

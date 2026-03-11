@@ -6,12 +6,15 @@ from utils.data_loader import (
     train_test_split,
     walk_forward_splits,
     generate_synthetic_ohlcv,
+    fetch_binance_ohlcv,
+    fetch_binance_bulk,
 )
 from utils.visualization import (
     plot_equity_curve,
     plot_drawdown,
     plot_trades_on_price,
     plot_metrics_summary,
+    plot_backtest_report,
 )
 
 __all__ = [
@@ -26,8 +29,11 @@ __all__ = [
     "train_test_split",
     "walk_forward_splits",
     "generate_synthetic_ohlcv",
+    "fetch_binance_ohlcv",
+    "fetch_binance_bulk",
     "plot_equity_curve",
     "plot_drawdown",
     "plot_trades_on_price",
     "plot_metrics_summary",
+    "plot_backtest_report",
 ]
