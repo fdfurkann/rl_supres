@@ -141,7 +141,7 @@ class BacktestResult:
         print("=" * 50)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return metrics and trade summary as a serialisable dict."""
+        """Return metrics and trade summary as a serializable dict."""
         trade_records = []
         for t in self.trades:
             trade_records.append(

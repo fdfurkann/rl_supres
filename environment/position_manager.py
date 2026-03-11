@@ -2,7 +2,7 @@
 Position manager — handles trade execution, SL/TP monitoring, and P&L accounting.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 
@@ -54,8 +54,7 @@ class PositionManager:
 
         self.equity: float = initial_equity
         self.trade: Optional[Trade] = None
-        self.closed_trades: list = field(default_factory=list)
-        self.closed_trades = []
+        self.closed_trades: list = []
 
     # ------------------------------------------------------------------
     # Public API
